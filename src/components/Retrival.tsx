@@ -26,8 +26,11 @@ const Retrival: React.FC = () => {
   const [summary, setSummary] = useState<string>("");
   const [updatedSummary, setUpdatedSummary] = useState<string>("");
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [userId, setUserId] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
   // Function to retrieve transcript and summary from Cosmos DB
-  const retrieveFromCosmosDB = async (uniqueCode: string) => {
+  const retrieveFromCosmosDB = async (uniqueCode: string, userId: string) => {
     setSummary("");
     setData(null);
 
@@ -39,11 +42,15 @@ const Retrival: React.FC = () => {
         id: containerId,
       });
       const querySpec = {
-        query: "SELECT * FROM c WHERE c.id = @id",
+        query: "SELECT * FROM c WHERE c.id = @id AND c.user = @user",
         parameters: [
           {
             name: "@id",
             value: uniqueCode,
+          },
+          {
+            name: "@user",
+            value: userId,
           },
         ],
       };
@@ -54,7 +61,7 @@ const Retrival: React.FC = () => {
       } else {
         toast({
           title: "Data not found",
-          description: "No data found with the provided ID.",
+          description: "No data found with the provided code and username.",
           status: "warning",
           duration: 3000,
           isClosable: true,
@@ -72,6 +79,7 @@ const Retrival: React.FC = () => {
       console.error("Error retrieving data from Cosmos DB", error);
     }
   };
+
   // Function to format transcript with color coding and line breaks
   const formatTranscript = (transcript: string) => {
     if (!transcript) return "No transcript available";
@@ -175,6 +183,68 @@ const Retrival: React.FC = () => {
     }
   };
 
+  const handleLogin = async () => {
+    try {
+      // Initialize Cosmos DB client
+      const cosmosDBClient = new CosmosClient({
+        endpoint: "https://singscribe-cosmosdb.documents.azure.com:443/",
+        key: "SjcL1sPNRelpz9IyBzXL1Aww9smwQALhmPxGikKauJ8H0C1CzXQU3SZ09Scfyg85CxQcPrWNAmS8ACDb2jcm4Q==",
+      });
+
+      const databaseId = "notebuddy";
+      const containerId = "users";
+
+      // Get or create the database and container
+      const { database } = await cosmosDBClient.databases.createIfNotExists({
+        id: databaseId,
+      });
+      const { container } = await database.containers.createIfNotExists({
+        id: containerId,
+      });
+
+      // Query for the user document
+      const querySpec = {
+        query: "SELECT * FROM c WHERE c.username = @username",
+        parameters: [
+          {
+            name: "@username",
+            value: userId, // Replace with the actual username
+          },
+        ],
+      };
+
+      const { resources: items } = await container.items
+        .query(querySpec)
+        .fetchAll();
+
+      if (items.length > 0) {
+        const user = items[0];
+        if (user.password === password) {
+          setIsAuthenticated(true);
+        } else {
+          toast({
+            title: "Login failed",
+            description: "Invalid password.",
+            status: "error",
+            duration: 5000,
+            isClosable: true,
+          });
+        }
+      } else {
+        toast({
+          title: "Login failed",
+          description: "User not found.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      }
+    } catch (error) {
+      console.error("Error while authenticating:", error);
+      // Handle error (e.g., show an error message to the user)
+    }
+  };
+
   return (
     <VStack
       spacing={6}
@@ -188,98 +258,152 @@ const Retrival: React.FC = () => {
         justifyContent: "flex-start",
       }}
     >
-      <HStack width="100%" justifyContent="flex-end" spacing={6}>
-        <Input
-          padding={7}
-          placeholder="Enter code"
-          value={uniqueCode}
-          onChange={(e) => setUniqueCode(e.target.value)}
-          width={40}
-        />
-        <Button
-          colorScheme="blue"
-          onClick={() => retrieveFromCosmosDB(uniqueCode)}
-          bgColor={uniqueCode ? "#E54809" : "#A0AEC0"}
-          marginEnd={50}
+      {!isAuthenticated ? (
+        <Box
+          display="flex"
+          flexDirection="column"
+          alignItems="center"
+          justifyContent="center"
+          textAlign="center"
+          height="100vh"
+          width="100vw"
+          // bgImage={`url(${shsbackground})`}
+          // bgPosition="center"
+          // bgRepeat="no-repeat"
+          // bgSize="cover"
         >
-          Retrieve Data
-        </Button>
-      </HStack>
-      {data && (
-        <HStack spacing={8} align="start" marginTop={5}>
-          <VStack spacing={4} align="stretch" width="100%">
-            <Text fontSize="2xl" fontWeight="bold" color="#E54809">
-              Transcript
-            </Text>
-            <Box
-              p={4}
-              shadow="md"
-              borderWidth="1px"
-              borderRadius="md"
-              width="100%"
+          <Box
+            backgroundColor="rgba(255, 255, 255, 0.6)" // Semi-transparent white background
+            p={8}
+            borderRadius="md"
+            boxShadow="lg"
+          >
+            <Text
+              fontSize="2xl"
+              fontWeight="bold"
+              color="black"
+              align="center"
+              mb={4}
             >
-              {/* Using dangerouslySetInnerHTML to render the formatted transcript */}
-              <div
-                dangerouslySetInnerHTML={
-                  formatTranscript(data.transcript) as { __html: string }
-                }
-              />
-            </Box>
-          </VStack>
-          <VStack spacing={4} align="stretch" width="100%">
-            <HStack spacing={4} align="center">
-              <Text fontSize="2xl" fontWeight="bold" color="#E54809">
-                Summary
-              </Text>
-              <Button
-                colorScheme="orange"
-                onClick={() => setIsEditing(true)}
-                width="10%"
-                bgColor={isEditing ? "#E54809" : "#A0AEC0"}
-              >
-                Edit
-              </Button>{" "}
-              <Button
-                colorScheme="orange"
-                bgColor={isEditing ? "#E54809" : "#A0AEC0"}
-                onClick={handleCopy}
-                m={2}
-              >
-                Copy
-              </Button>
-              {isEditing ? (
-                <Button
-                  colorScheme="green"
-                  onClick={updateSummaryInCosmosDB}
-                  width="10%"
-                  bgColor={isEditing ? "#E54809" : "#A0AEC0"}
+              Login to NoteBuddy
+            </Text>
+            <Input
+              placeholder="User ID"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              mb={4}
+            />
+            <Input
+              placeholder="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              mb={6}
+            />
+            <Button colorScheme="orange" onClick={handleLogin} width="full">
+              Login
+            </Button>
+            <Text fontSize="sm" mt={4}>
+              Note: Send email to oia@singhealth.com.sg for access
+            </Text>
+          </Box>
+        </Box>
+      ) : (
+        <>
+          <HStack width="100%" justifyContent="flex-end" spacing={6}>
+            <Input
+              padding={7}
+              placeholder="Enter code"
+              value={uniqueCode}
+              onChange={(e) => setUniqueCode(e.target.value)}
+              width={40}
+            />
+            <Button
+              colorScheme="blue"
+              onClick={() => retrieveFromCosmosDB(uniqueCode, userId)}
+              bgColor={uniqueCode ? "#E54809" : "#A0AEC0"}
+              marginEnd={50}
+            >
+              Retrieve Data
+            </Button>
+          </HStack>
+          {data && (
+            <HStack spacing={8} align="start" marginTop={5}>
+              <VStack spacing={4} align="stretch" width="100%">
+                <Text fontSize="2xl" fontWeight="bold" color="#E54809">
+                  Transcript
+                </Text>
+                <Box
+                  p={4}
+                  shadow="md"
+                  borderWidth="1px"
+                  borderRadius="md"
+                  width="100%"
                 >
-                  Save
-                </Button>
-              ) : null}
+                  {/* Using dangerouslySetInnerHTML to render the formatted transcript */}
+                  <div
+                    dangerouslySetInnerHTML={
+                      formatTranscript(data.transcript) as { __html: string }
+                    }
+                  />
+                </Box>
+              </VStack>
+              <VStack spacing={4} align="stretch" width="100%">
+                <HStack spacing={4} align="center">
+                  <Text fontSize="2xl" fontWeight="bold" color="#E54809">
+                    Summary
+                  </Text>
+                  <Button
+                    colorScheme="orange"
+                    onClick={() => setIsEditing(true)}
+                    width="10%"
+                    bgColor={isEditing ? "#E54809" : "#A0AEC0"}
+                  >
+                    Edit
+                  </Button>{" "}
+                  <Button
+                    colorScheme="orange"
+                    bgColor={isEditing ? "#E54809" : "#A0AEC0"}
+                    onClick={handleCopy}
+                    m={2}
+                  >
+                    Copy
+                  </Button>
+                  {isEditing ? (
+                    <Button
+                      colorScheme="green"
+                      onClick={updateSummaryInCosmosDB}
+                      width="10%"
+                      bgColor={isEditing ? "#E54809" : "#A0AEC0"}
+                    >
+                      Save
+                    </Button>
+                  ) : null}
+                </HStack>
+                {isEditing ? (
+                  <>
+                    <ReactQuill
+                      theme="snow"
+                      style={editorStyle}
+                      value={summary} // Use summary state here
+                      onChange={setSummary} // Update summary state on change
+                      modules={modules}
+                    />
+                  </>
+                ) : (
+                  <Box
+                    p={4}
+                    shadow="md"
+                    borderWidth="1px"
+                    borderRadius="md"
+                    width="100%"
+                    dangerouslySetInnerHTML={{ __html: summary }}
+                  />
+                )}
+              </VStack>
             </HStack>
-            {isEditing ? (
-              <>
-                <ReactQuill
-                  theme="snow"
-                  style={editorStyle}
-                  value={summary} // Use summary state here
-                  onChange={setSummary} // Update summary state on change
-                  modules={modules}
-                />
-              </>
-            ) : (
-              <Box
-                p={4}
-                shadow="md"
-                borderWidth="1px"
-                borderRadius="md"
-                width="100%"
-                dangerouslySetInnerHTML={{ __html: summary }}
-              />
-            )}
-          </VStack>
-        </HStack>
+          )}
+        </>
       )}
     </VStack>
   );
